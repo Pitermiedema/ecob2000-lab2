@@ -1,0 +1,205 @@
+---
+title: "HW3: Predictors of Ever Being Married"
+subtitle: "Household Pulse Survey"
+format: html
+editor: visual
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(scales)
+library(broom)
+
+load("Household_Pulse_data.RData")
+d <- Household_Pulse_data
+```
+
+## Building the outcome variable
+
+The survey's `MS` variable records current marital status: married, widowed,
+divorced, separated, or never married. "Ever married" groups together anyone
+who is or has been married (married / widowed / divorced / separated) versus
+those who report never having married. Rows with missing `MS` are dropped.
+
+```{r}
+d <- d %>%
+  filter(!is.na(MS)) %>%
+  mutate(
+    ever_married = if_else(MS == "never", "Never married", "Ever married"),
+    ever_married = factor(ever_married, levels = c("Never married", "Ever married")),
+
+    # Household Pulse Survey covers 2020-2024; using the midpoint year as a
+    # reference since this extract has no per-row survey date.
+    age = 2023 - TBIRTH_YEAR,
+    age_group = cut(age, breaks = c(17, 24, 34, 44, 54, 64, 74, 100),
+                     labels = c("18-24", "25-34", "35-44", "45-54",
+                                "55-64", "65-74", "75+")),
+
+    # Kept as regular (non-ordered) factors so the regression below reports
+    # interpretable dummy-variable coefficients against a reference level,
+    # rather than orthogonal polynomial contrasts.
+    education = factor(EEDUC, levels = c("less than hs", "some hs", "HS diploma",
+                                          "some coll", "assoc deg", "bach deg", "adv deg")),
+
+    income = factor(INCOME, levels = c("HH income less than $25k", "HH income $25k - $34.9k",
+                                        "HH income $35k - 49.9", "HH income $50k - 74.9",
+                                        "HH income $75 - 99.9", "HH income $100k - 149",
+                                        "HH income $150 - 199", "HH income $200k +")),
+
+    gender = factor(EGENID_BIRTH),
+    race = factor(RRACE),
+    hispanic = factor(RHISPANIC),
+    region = factor(REGION),
+
+    # This extract encodes "not applicable" as a literal "NA" factor level
+    # rather than a true missing value, so those levels must be dropped
+    # explicitly rather than relying on is.na().
+    employment = factor(ANYWORK, levels = c("yes employment in last 7 days",
+                                             "no employment in last 7 days")),
+
+    has_kids = if_else(as.character(KIDS_LT5Y) != "NA" |
+                          as.character(KIDS_5_11Y) != "NA" |
+                          as.character(KIDS_12_17Y) != "NA",
+                        "Has children in HH", "No children in HH"),
+    has_kids = factor(has_kids)
+  ) %>%
+  filter(age >= 18, age <= 95)
+
+n_total <- nrow(d)
+overall_rate <- mean(d$ever_married == "Ever married")
+```
+
+Sample size after cleaning: **`r comma(n_total)`** respondents. Overall,
+**`r percent(overall_rate, accuracy = 0.1)`** report having ever been married.
+
+## Ever-married rate by demographic factor
+
+A small helper summarizes the ever-married rate within levels of a grouping
+variable, then plots it as a bar chart.
+
+```{r}
+plot_rate_by <- function(data, group_var, title, xlab) {
+  summary_tbl <- data %>%
+    group_by(.group = {{ group_var }}) %>%
+    summarise(rate = mean(ever_married == "Ever married"), n = n(), .groups = "drop") %>%
+    filter(!is.na(.group))
+
+  ggplot(summary_tbl, aes(x = .group, y = rate)) +
+    geom_col(fill = "#2C5F8A") +
+    geom_text(aes(label = percent(rate, accuracy = 1)), vjust = -0.4, size = 3.2) +
+    scale_y_continuous(labels = percent, limits = c(0, 1)) +
+    labs(title = title, x = xlab, y = "Share ever married") +
+    theme_minimal(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+}
+```
+
+### Age
+
+```{r}
+p_age <- plot_rate_by(d, age_group, "Ever Married by Age Group", "Age group")
+p_age
+ggsave("hw3_married_by_age.png", p_age, width = 8, height = 5, dpi = 300)
+```
+
+### Education
+
+```{r}
+p_educ <- plot_rate_by(d, education, "Ever Married by Education", "Education")
+p_educ
+ggsave("hw3_married_by_education.png", p_educ, width = 8, height = 5, dpi = 300)
+```
+
+### Household income
+
+```{r}
+p_income <- plot_rate_by(d, income, "Ever Married by Household Income", "Household income")
+p_income
+ggsave("hw3_married_by_income.png", p_income, width = 9, height = 5, dpi = 300)
+```
+
+### Gender, race/ethnicity, and region
+
+```{r}
+p_gender <- plot_rate_by(d, gender, "Ever Married by Gender", "Gender")
+p_gender
+
+p_race <- plot_rate_by(d, race, "Ever Married by Race", "Race")
+p_race
+
+p_hispanic <- plot_rate_by(d, hispanic, "Ever Married by Hispanic Origin", "Hispanic origin")
+p_hispanic
+
+p_region <- plot_rate_by(d, region, "Ever Married by Region", "Region")
+p_region
+
+ggsave("hw3_married_by_gender.png", p_gender, width = 6, height = 5, dpi = 300)
+ggsave("hw3_married_by_race.png", p_race, width = 7, height = 5, dpi = 300)
+ggsave("hw3_married_by_hispanic.png", p_hispanic, width = 6, height = 5, dpi = 300)
+ggsave("hw3_married_by_region.png", p_region, width = 7, height = 5, dpi = 300)
+```
+
+### Children in household and employment
+
+```{r}
+p_kids <- plot_rate_by(d, has_kids, "Ever Married by Presence of Children", "Children in household")
+p_kids
+
+p_emp <- plot_rate_by(d, employment, "Ever Married by Employment Status", "Employment (last 7 days)")
+p_emp
+
+ggsave("hw3_married_by_kids.png", p_kids, width = 6, height = 5, dpi = 300)
+ggsave("hw3_married_by_employment.png", p_emp, width = 7, height = 5, dpi = 300)
+```
+
+## Which factors predict ever having been married?
+
+The bar charts above show each factor on its own, but many of these variables
+are correlated with each other (age and income, for instance). A logistic
+regression lets us see which factors still predict marital history once we
+account for the others.
+
+```{r}
+model <- glm(
+  ever_married ~ age + gender + race + hispanic + education + income +
+    region + has_kids + employment,
+  data = d,
+  family = binomial
+)
+
+summary(model)
+```
+
+```{r}
+or_tbl <- tidy(model, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term != "(Intercept)")
+
+or_tbl
+```
+
+```{r}
+p_or <- ggplot(or_tbl, aes(x = estimate, y = fct_reorder(term, estimate))) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), color = "#2C5F8A") +
+  scale_x_log10() +
+  labs(title = "Predictors of Ever Being Married (Logistic Regression)",
+       subtitle = "Odds ratios with 95% confidence intervals, log scale",
+       x = "Odds ratio", y = NULL) +
+  theme_minimal(base_size = 12)
+
+p_or
+ggsave("hw3_odds_ratios.png", p_or, width = 9, height = 7, dpi = 300)
+```
+
+## Takeaways
+
+- Report the overall ever-married rate and how it varies across the strongest
+  bivariate factors from the bar charts (age is typically the biggest driver,
+  since marital status accumulates over the life course).
+- Use the odds-ratio plot to say which factors remain significant predictors
+  after controlling for the others — points whose confidence interval crosses
+  1 are not statistically distinguishable from "no effect" in this model.
+- Note the age proxy caveat: this extract has no per-row survey year, so age
+  is approximated using the 2020-2024 survey midpoint (2023).
